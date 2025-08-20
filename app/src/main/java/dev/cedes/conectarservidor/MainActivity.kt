@@ -6,6 +6,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -14,6 +15,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,10 +37,11 @@ import dev.cedes.conectarservidor.ui.theme.ConectarservidorTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.charset.StandardCharsets
 import kotlin.random.Random
-import androidx.compose.foundation.BorderStroke
 
 // Modelo de datos que coincide con tu JSON
 data class Usuario(
@@ -136,8 +142,10 @@ fun ListaUsuariosScreen(modifier: Modifier = Modifier) {
     var errorMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     var searchText by remember { mutableStateOf("") }
+    var showAddDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    val refreshData: () -> Unit = {
+        isLoading = true
         scope.launch {
             try {
                 usuarios = obtenerUsuarios()
@@ -146,6 +154,10 @@ fun ListaUsuariosScreen(modifier: Modifier = Modifier) {
             }
             isLoading = false
         }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshData()
     }
 
     val filteredUsuarios = remember(usuarios, searchText) {
@@ -160,28 +172,57 @@ fun ListaUsuariosScreen(modifier: Modifier = Modifier) {
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = searchText,
-            onValueChange = { searchText = it },
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            placeholder = { Text("Buscar por nombre o correo") },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Ícono de búsqueda"
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = searchText,
+                onValueChange = { searchText = it },
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("Buscar por nombre o correo", color = Color.Gray) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Ícono de búsqueda",
+                        tint = Color.Black
+                    )
+                },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Color.White.copy(alpha = 0.9f),
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.7f),
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    cursorColor = Color.Black,
+                    focusedTextColor = Color.Black,
+                    unfocusedTextColor = Color.Black,
                 )
-            },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Color.Black.copy(alpha = 0.8f),
-                unfocusedContainerColor = Color.Black.copy(alpha = 0.6f),
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                cursorColor = MaterialTheme.colorScheme.onSurface
             )
-        )
+            IconButton(
+                onClick = refreshData,
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Recargar lista",
+                    tint = Color.White
+                )
+            }
+            IconButton(
+                onClick = { showAddDialog = true },
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Agregar usuario",
+                    tint = Color.White
+                )
+            }
+        }
 
         when {
             isLoading -> {
@@ -197,11 +238,28 @@ fun ListaUsuariosScreen(modifier: Modifier = Modifier) {
             else -> {
                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                     items(filteredUsuarios) { usuario ->
-                        UsuarioCard(usuario)
+                        UsuarioCard(usuario = usuario)
                     }
                 }
             }
         }
+    }
+
+    if (showAddDialog) {
+        AddUserDialog(
+            onDismissRequest = { showAddDialog = false },
+            onAddUser = { nombre, email ->
+                scope.launch {
+                    try {
+                        insertarUsuario(nombre, email)
+                        showAddDialog = false
+                        refreshData()
+                    } catch (e: Exception) {
+                        errorMessage = "Error al insertar: ${e.message}"
+                    }
+                }
+            }
+        )
     }
 }
 
@@ -228,7 +286,7 @@ fun UsuarioCard(usuario: Usuario) {
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .clickable(
-                onClick = { /* Acción al hacer clic en la tarjeta */ },
+                onClick = { },
                 interactionSource = interactionSource,
                 indication = null
             )
@@ -238,23 +296,94 @@ fun UsuarioCard(usuario: Usuario) {
         colors = CardDefaults.cardColors(containerColor = cardBackgroundColor),
         border = cardBorder
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = usuario.nombre,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = usuario.email,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = "Ícono de usuario",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = usuario.nombre,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Email,
+                        contentDescription = "Ícono de correo",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = usuario.email,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AddUserDialog(
+    onDismissRequest: () -> Unit,
+    onAddUser: (nombre: String, email: String) -> Unit
+) {
+    var nombre by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text("Agregar Nuevo Usuario") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = nombre,
+                    onValueChange = { nombre = it },
+                    label = { Text("Nombre") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Correo Electrónico") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (nombre.isNotBlank() && email.isNotBlank()) {
+                        onAddUser(nombre, email)
+                    }
+                }
+            ) {
+                Text("Agregar")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismissRequest) {
+                Text("Cancelar")
+            }
+        }
+    )
 }
 
 suspend fun obtenerUsuarios(): List<Usuario> {
@@ -267,7 +396,7 @@ suspend fun obtenerUsuarios(): List<Usuario> {
             connection.readTimeout = 5000
 
             if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                val json = connection.inputStream.bufferedReader().use { it.readText() }
+                val json = connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
                 val listType = object : TypeToken<List<Usuario>>() {}.type
                 Gson().fromJson(json, listType)
             } else {
@@ -279,10 +408,33 @@ suspend fun obtenerUsuarios(): List<Usuario> {
     }
 }
 
-@Composable
-@Preview(showBackground = true)
-fun PreviewUsuarioCard() {
-    ConectarservidorTheme {
-        UsuarioCard(usuario = Usuario(1, "Carlos Sedeño", "carlos@example.com"))
+suspend fun insertarUsuario(nombre: String, email: String) {
+    return withContext(Dispatchers.IO) {
+        val url = URL("http://200.57.149.25:8079/pruebas/insertar_usuario.php")
+        val connection = url.openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            connection.doOutput = true
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+
+            val jsonInputString = "{\"nombre\": \"$nombre\", \"email\": \"$email\"}"
+
+            OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { writer ->
+                writer.write(jsonInputString)
+            }
+
+            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                println("Respuesta del servidor: $response")
+            } else {
+                val error = connection.errorStream.bufferedReader().use { it.readText() }
+                println("Error del servidor: $error")
+                throw Exception("Error del servidor: ${connection.responseCode}")
+            }
+        } finally {
+            connection.disconnect()
+        }
     }
 }
